@@ -1,0 +1,8 @@
+node_modules
+.env
+GUIA_AUTENTICACION.md
+INICIO_RAPIDO.md
+RESUMEN_AUTENTICACION.md
+README.md
+estructura_carpetas.txt
+firebaseKeys.json
