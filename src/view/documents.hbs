@@ -1,0 +1,56 @@
+<div class="documents-container">
+    <div class="documents-header">
+        <h1>Gestión de Documentos</h1>
+        <button id="new-doc-btn" class="btn btn-primary">+ Nuevo Documento</button>
+    </div>
+    
+    <div class="documents-filters">
+        <div class="filter-group">
+            <label for="collection-select">Colección:</label>
+            <select id="collection-select" class="form-control">
+                <option value="">Seleccionar colección...</option>
+            </select>
+        </div>
+        
+        <div class="filter-group">
+            <label for="search-input">Buscar:</label>
+            <input type="text" id="search-input" class="form-control" placeholder="Buscar documentos...">
+        </div>
+    </div>
+    
+    <div id="documents-list" class="documents-list">
+        <div class="empty-state">
+            <p>No hay documentos. Crea uno nuevo para comenzar.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para crear/editar documento -->
+<div id="doc-modal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2 id="modal-title">Nuevo Documento</h2>
+        <form id="doc-form">
+            <div class="form-group">
+                <label for="modal-collection">Colección</label>
+                <input type="text" id="modal-collection" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="modal-doc-id">ID del Documento (opcional)</label>
+                <input type="text" id="modal-doc-id" placeholder="Dejar vacío para auto-generar">
+            </div>
+            
+            <div class="form-group">
+                <label for="modal-data">Datos (JSON)</label>
+                <textarea id="modal-data" rows="10" required placeholder='{"campo": "valor"}'></textarea>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Guardar</button>
+                <button type="button" class="btn btn-outline close-modal">Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+

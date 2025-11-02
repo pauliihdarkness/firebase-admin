@@ -1,0 +1,122 @@
+ESTRUCTURA DE CARPETAS DEL PROYECTO FIREBASE-ADMIN
+==================================================
+
+firebase-admin/
+│
+├── firebaseKeys.json
+├── package.json
+├── package-lock.json
+├── node_modules/
+│
+└── src/
+    ├── app.js
+    ├── index.js
+    ├── firebaseConfig.js
+    │
+    ├── controllers/
+    │   ├── collectionFirebase.js
+    │   ├── authController.js
+    │
+    ├── routes/
+    │   ├── index.js
+    │   ├── crudRouter.js
+    │   └── authRouter.js
+    │
+    ├── middleware/
+    │   └── authMiddleware.js
+    │
+    ├── public/
+    │   ├── css/
+    │   │   └── style.css
+    │   ├── js/
+    │   │   ├── firebase-config.js
+    │   │   └── app.js
+    │   └── img/
+    │       └── default-avatar.png
+    │
+    └── view/
+        ├── layouts/
+        │   └── main.hbs
+        ├── partials/
+        │   ├── header.hbs
+        │   └── footer.hbs
+        ├── login.hbs
+        ├── register.hbs
+        ├── dashboard.hbs
+        ├── profile.hbs
+        └── documents.hbs
+
+
+DESCRIPCIÓN DE CARPETAS Y ARCHIVOS:
+-----------------------------------
+
+firebase-admin/              → Raíz del proyecto
+├── firebaseKeys.json        → Credenciales de Firebase
+├── package.json             → Configuración de dependencias npm
+├── package-lock.json        → Lock file de npm
+└── node_modules/            → Dependencias instaladas
+
+src/                        → Código fuente del proyecto
+├── app.js                  → Configuración de la aplicación Express
+├── index.js                → Punto de entrada principal
+├── firebaseConfig.js       → Configuración de Firebase Admin SDK
+
+src/controllers/            → Controladores de lógica de negocio
+├── collectionFirebase.js   → Controlador para colecciones de Firebase
+└── authController.js       → Controlador de autenticación (Google, Firebase)
+
+src/routes/                 → Rutas de la aplicación
+├── index.js                → Archivo principal de rutas
+├── crudRouter.js           → Rutas CRUD
+├── authRouter.js           → Rutas de autenticación
+└── viewRouter.js           → Rutas de vistas (páginas web)
+
+src/middleware/             → Middlewares de la aplicación
+└── authMiddleware.js       → Middleware de verificación de tokens y roles
+
+src/public/                 → Archivos estáticos del cliente
+├── css/
+│   └── style.css          → Estilos principales de la aplicación
+├── js/
+│   ├── firebase-config.js → Configuración Firebase Web SDK
+│   └── app.js             → Lógica del frontend (autenticación, UI)
+└── img/                    → Imágenes estáticas
+
+src/view/                   → Vistas/templates Handlebars
+├── layouts/
+│   └── main.hbs           → Layout principal (header, footer, body)
+├── partials/
+│   ├── header.hbs         → Header con navegación
+│   └── footer.hbs         → Footer
+├── login.hbs              → Página de inicio de sesión
+├── register.hbs           → Página de registro
+├── dashboard.hbs          → Panel principal
+├── profile.hbs            → Perfil de usuario
+└── documents.hbs          → Gestión de documentos
+
+
+ENDPOINTS DISPONIBLES:
+---------------------
+
+AUTENTICACIÓN (/auth):
+  POST   /auth/register              → Registrar nuevo usuario
+  POST   /auth/verify-google         → Verificar token de Google
+  GET    /auth/me                    → Obtener usuario actual
+  PUT    /auth/me                    → Actualizar usuario actual
+  DELETE /auth/me                    → Eliminar usuario actual
+  GET    /auth/users                 → Listar todos los usuarios (admin)
+
+CRUD API (/api):
+  POST   /api/:collection            → Crear documento
+  GET    /api/:collection            → Obtener todos los documentos
+  GET    /api/:collection/:docId     → Obtener documento específico
+  PUT    /api/:collection/:docId     → Actualizar documento
+  DELETE /api/:collection/:docId     → Eliminar documento
+
+VISTAS (Frontend):
+  GET    /                          → Página de login
+  GET    /register                  → Página de registro
+  GET    /dashboard                 → Dashboard principal
+  GET    /profile                   → Perfil de usuario
+  GET    /documents                 → Gestión de documentos
+

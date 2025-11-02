@@ -1,0 +1,19 @@
+<header class="header">
+    <div class="container">
+        <div class="logo">
+            <h1>🔥 Firebase Admin</h1>
+        </div>
+        <nav class="nav" id="nav">
+            {{#if user}}
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/documents" class="nav-link">Documentos</a>
+                <a href="/profile" class="nav-link">Perfil</a>
+                <button id="logout-btn" class="btn btn-outline">Cerrar Sesión</button>
+            {{else}}
+                <a href="/" class="nav-link">Iniciar Sesión</a>
+                <a href="/register" class="nav-link">Registrarse</a>
+            {{/if}}
+        </nav>
+    </div>
+</header>
+

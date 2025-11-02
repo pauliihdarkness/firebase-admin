@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - Firebase Admin</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <!-- Firebase SDK desde CDN -->
+    <script src="https://www.gstatic.com/firebasejs/12.5.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.5.0/firebase-auth-compat.js"></script>
+    
+    <!-- Inyectar configuración de Firebase desde variables de entorno -->
+    <script>
+        window.FIREBASE_CONFIG = {
+            apiKey: "{{firebaseConfig.apiKey}}",
+            authDomain: "{{firebaseConfig.authDomain}}",
+            databaseURL: "{{firebaseConfig.databaseURL}}",
+            projectId: "{{firebaseConfig.projectId}}",
+            storageBucket: "{{firebaseConfig.storageBucket}}",
+            messagingSenderId: "{{firebaseConfig.messagingSenderId}}",
+            appId: "{{firebaseConfig.appId}}"
+        };
+    </script>
+</head>
+<body>
+    {{> header}}
+    
+    <main class="main-content">
+        {{{body}}}
+    </main>
+    
+    {{> footer}}
+    
+    <!-- Cargar configuración de Firebase primero (NO como módulo) -->
+    <script src="/js/firebase-config.js"></script>
+    <!-- Luego cargar la aplicación -->
+    <script src="/js/app.js"></script>
+</body>
+</html>
+

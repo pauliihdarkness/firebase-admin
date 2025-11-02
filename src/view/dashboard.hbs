@@ -1,0 +1,45 @@
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>Dashboard</h1>
+        <p class="welcome-text">Bienvenido, <span id="user-name">Usuario</span></p>
+    </div>
+    
+    <div class="dashboard-stats">
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-info">
+                <h3 id="total-docs">0</h3>
+                <p>Documentos Totales</p>
+            </div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-icon">📁</div>
+            <div class="stat-info">
+                <h3 id="total-collections">0</h3>
+                <p>Colecciones</p>
+            </div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-info">
+                <h3 id="user-status">Activo</h3>
+                <p>Estado</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="dashboard-actions">
+        <a href="/documents" class="btn btn-primary">Gestionar Documentos</a>
+        <a href="/profile" class="btn btn-outline">Mi Perfil</a>
+    </div>
+    
+    <div class="recent-activity">
+        <h2>Actividad Reciente</h2>
+        <div id="activity-list" class="activity-list">
+            <p class="empty-state">No hay actividad reciente</p>
+        </div>
+    </div>
+</div>
+
