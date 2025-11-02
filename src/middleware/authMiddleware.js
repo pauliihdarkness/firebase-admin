@@ -1,4 +1,5 @@
 import { admin } from '../firebaseConfig.js';
+import db from '../firebaseConfig.js';
 
 // Middleware para verificar el token de Firebase
 export const verifyFirebaseToken = async (req, res, next) => {
@@ -23,20 +24,60 @@ export const verifyFirebaseToken = async (req, res, next) => {
     }
 };
 
+// Middleware para verificar rol desde Firestore
+export const checkRole = async (req, res, next) => {
+    try {
+        const { uid } = req.user;
+        
+        // Obtener datos del usuario desde Firestore
+        const userDoc = await db.collection('users').doc(uid).get();
+        
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'Usuario no encontrado en Firestore' });
+        }
+
+        const userData = userDoc.data();
+        req.userRole = userData.role || 'user'; // Rol por defecto: user
+        req.userData = userData;
+        next();
+    } catch (error) {
+        console.error('Error verificando rol:', error);
+        res.status(500).json({ error: 'Error verificando permisos' });
+    }
+};
+
 // Middleware para verificar rol de administrador
 export const isAdmin = async (req, res, next) => {
     try {
-        // Verificar si el token es válido primero
-        await verifyFirebaseToken(req, res, () => {
-            // Aquí puedes agregar lógica adicional para verificar roles
-            // Por ejemplo, verificar claims personalizados
-            if (!req.user.admin) {
-                return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de administrador' });
-            }
-            next();
+        // Verificar token primero
+        await verifyFirebaseToken(req, res, async () => {
+            // Verificar rol desde Firestore
+            await checkRole(req, res, () => {
+                if (req.userRole !== 'admin') {
+                    return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de administrador' });
+                }
+                next();
+            });
         });
     } catch (error) {
-        console.error('Error verificando rol:', error);
+        console.error('Error verificando rol de admin:', error);
+        res.status(403).json({ error: 'Error verificando permisos' });
+    }
+};
+
+// Middleware para verificar rol de moderador o admin
+export const isModerator = async (req, res, next) => {
+    try {
+        await verifyFirebaseToken(req, res, async () => {
+            await checkRole(req, res, () => {
+                if (req.userRole !== 'admin' && req.userRole !== 'moderador') {
+                    return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de moderador o administrador' });
+                }
+                next();
+            });
+        });
+    } catch (error) {
+        console.error('Error verificando rol de moderador:', error);
         res.status(403).json({ error: 'Error verificando permisos' });
     }
 };

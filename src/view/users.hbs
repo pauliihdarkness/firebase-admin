@@ -1,0 +1,249 @@
+<div class="users-container">
+    <div class="page-header">
+        <h1>Gestión de Usuarios</h1>
+        <p>Administra los roles y permisos de los usuarios del sistema</p>
+    </div>
+
+    <div class="users-content">
+        <div class="users-filters">
+            <div class="search-box">
+                <input type="text" id="users-search" placeholder="Buscar por nombre, email o rol..." class="form-control">
+            </div>
+            <div class="role-filter">
+                <label>Filtrar por rol:</label>
+                <select id="role-filter" class="form-control">
+                    <option value="">Todos los roles</option>
+                    <option value="admin">Administrador</option>
+                    <option value="moderador">Moderador</option>
+                    <option value="user">Usuario</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="users-stats" id="users-stats">
+            <div class="stat-card">
+                <span class="stat-label">Total Usuarios</span>
+                <span class="stat-value" id="total-users">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Administradores</span>
+                <span class="stat-value" id="admin-count">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Moderadores</span>
+                <span class="stat-value" id="moderator-count">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Usuarios</span>
+                <span class="stat-value" id="user-count">0</span>
+            </div>
+        </div>
+
+        <div class="users-list-container">
+            <div id="loading-message" class="loading-message" style="display: none;">
+                <p>Cargando usuarios...</p>
+            </div>
+            <div id="no-admin-warning" class="alert alert-warning" style="display: none;">
+                <strong>⚠️ No hay administradores en el sistema</strong>
+                <p>Puedes asignar el primer administrador seleccionando "Administrador" en cualquier usuario y haciendo clic en "Guardar".</p>
+            </div>
+            <div id="error-message" class="alert alert-error" style="display: none;"></div>
+            <div id="success-message" class="alert alert-success" style="display: none;"></div>
+            
+            <div id="users-list" class="users-list">
+                <!-- Los usuarios se cargarán aquí dinámicamente -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.users-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+.page-header {
+    margin-bottom: 2rem;
+}
+
+.page-header h1 {
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.users-filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.search-box {
+    flex: 1;
+    min-width: 250px;
+}
+
+.role-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.role-filter label {
+    white-space: nowrap;
+}
+
+.users-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    color: var(--text-light);
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    display: block;
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+.users-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.user-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.user-info {
+    flex: 1;
+    min-width: 200px;
+}
+
+.user-name {
+    font-weight: bold;
+    color: var(--primary-color);
+    margin-bottom: 0.25rem;
+    word-break: break-word;
+}
+
+.user-email {
+    color: var(--text-light);
+    font-size: 0.9rem;
+    word-break: break-word;
+}
+
+.user-meta {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.user-meta-item {
+    font-size: 0.85rem;
+    color: var(--text-light);
+}
+
+.user-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.role-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.role-selector select {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.role-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.role-badge.admin {
+    background: #ff4444;
+    color: white;
+}
+
+.role-badge.moderador {
+    background: #ff9900;
+    color: white;
+}
+
+.role-badge.user {
+    background: #4285f4;
+    color: white;
+}
+
+.loading-message {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-light);
+}
+
+@media (max-width: 768px) {
+    .users-container {
+        padding: 1rem;
+    }
+    
+    .user-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .user-actions {
+        width: 100%;
+    }
+    
+    .role-selector {
+        width: 100%;
+    }
+    
+    .role-selector select {
+        flex: 1;
+    }
+}
+</style>
+

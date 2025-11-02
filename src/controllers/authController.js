@@ -22,6 +22,7 @@ export const registerUser = async (req, res) => {
         await db.collection('users').doc(userRecord.uid).set({
             email: userRecord.email,
             displayName: userRecord.displayName,
+            role: 'user', // Rol por defecto: user, admin, moderador
             createdAt: new Date().toISOString(),
             lastLogin: new Date().toISOString()
         });
@@ -105,27 +106,108 @@ export const deleteUser = async (req, res) => {
     }
 };
 
-// Listar todos los usuarios (solo admin)
+// Listar todos los usuarios (solo admin o si no hay admins)
 export const getAllUsers = async (req, res) => {
     try {
         const { uid } = req.user;
-
-        // Verificar si el usuario tiene permisos de admin
-        const userDoc = await db.collection('users').doc(uid).get();
-        if (!userDoc.exists || !userDoc.data().isAdmin) {
-            return res.status(403).json({ error: 'No tienes permisos para ver usuarios' });
+        
+        // Verificar si hay algún admin en el sistema
+        const allUsersSnapshot = await db.collection('users').get();
+        const hasAnyAdmin = allUsersSnapshot.docs.some(doc => {
+            const userData = doc.data();
+            return userData.role === 'admin';
+        });
+        
+        // Si hay admins, verificar que el usuario actual sea admin
+        if (hasAnyAdmin) {
+            const userDoc = await db.collection('users').doc(uid).get();
+            if (!userDoc.exists) {
+                return res.status(404).json({ error: 'Usuario no encontrado' });
+            }
+            const userData = userDoc.data();
+            if (userData.role !== 'admin') {
+                return res.status(403).json({ error: 'No tienes permisos para ver usuarios' });
+            }
         }
-
+        // Si no hay admins, permitir acceso a cualquier usuario autenticado
+        
         // Obtener todos los usuarios de Firestore
-        const usersSnapshot = await db.collection('users').get();
-        const users = usersSnapshot.docs.map(doc => ({
+        const users = allUsersSnapshot.docs.map(doc => ({
             uid: doc.id,
-            ...doc.data()
+            ...doc.data(),
+            role: doc.data().role || 'user' // Asegurar que todos tengan rol
         }));
 
         res.json(users);
     } catch (error) {
         console.error('Error obteniendo usuarios:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Actualizar rol de usuario (solo admin)
+export const updateUserRole = async (req, res) => {
+    try {
+        const { uid: requestingUid } = req.user;
+        const { uid: targetUid, role } = req.body;
+
+        // Verificar que el usuario que hace la petición sea admin
+        const adminDoc = await db.collection('users').doc(requestingUid).get();
+        if (!adminDoc.exists) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        const adminData = adminDoc.data();
+        
+        // Verificar si hay algún admin en el sistema
+        const allUsersSnapshot = await db.collection('users').get();
+        const hasAnyAdmin = allUsersSnapshot.docs.some(doc => {
+            const userData = doc.data();
+            return userData.role === 'admin';
+        });
+        
+        // Si no hay ningún admin y se está intentando crear uno, permitirlo
+        if (!hasAnyAdmin && role === 'admin') {
+            // Permitir que cualquier usuario autenticado se convierta en el primer admin
+            console.log(`Primer admin siendo creado: ${targetUid} por ${requestingUid}`);
+        } else if (adminData.role !== 'admin') {
+            return res.status(403).json({ error: 'Solo los administradores pueden cambiar roles' });
+        }
+
+        // Validar rol
+        const validRoles = ['admin', 'user', 'moderador'];
+        if (!role || !validRoles.includes(role)) {
+            return res.status(400).json({ 
+                error: 'Rol inválido. Roles válidos: admin, user, moderador' 
+            });
+        }
+
+        // Verificar que el usuario objetivo existe
+        const targetDoc = await db.collection('users').doc(targetUid).get();
+        if (!targetDoc.exists) {
+            return res.status(404).json({ error: 'Usuario objetivo no encontrado' });
+        }
+
+        // Actualizar rol
+        await db.collection('users').doc(targetUid).update({
+            role,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Si se actualiza el rol a admin, también actualizar custom claims en Firebase Auth
+        if (role === 'admin') {
+            await admin.auth().setCustomUserClaims(targetUid, { admin: true });
+        } else {
+            await admin.auth().setCustomUserClaims(targetUid, { admin: false });
+        }
+
+        res.json({ 
+            message: 'Rol actualizado exitosamente',
+            uid: targetUid,
+            role 
+        });
+    } catch (error) {
+        console.error('Error actualizando rol:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -145,6 +227,7 @@ export const verifyGoogleToken = async (req, res) => {
                 email,
                 displayName: name,
                 picture,
+                role: 'user', // Rol por defecto: user, admin, moderador
                 createdAt: new Date().toISOString(),
                 lastLogin: new Date().toISOString(),
                 provider: 'google'

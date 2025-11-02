@@ -18,7 +18,7 @@ function initializeApp() {
             // pero esperar un momento para evitar redirecciones prematuras
             setTimeout(() => {
                 const path = window.location.pathname;
-                const protectedPaths = ['/dashboard', '/profile', '/documents'];
+                const protectedPaths = ['/dashboard', '/profile', '/documents', '/users'];
                 
                 if (protectedPaths.includes(path) && !user && auth.currentUser === null) {
                     window.location.href = '/';
@@ -56,19 +56,72 @@ const initInterval = setInterval(() => {
     initAttempts++;
 }, 100);
 
+// Variable global para el rol del usuario actual
+let currentUserRole = null;
+
 // Actualizar UI según el estado de autenticación
-function updateUI(user) {
+async function updateUI(user) {
     const nav = document.getElementById('nav');
     if (!nav) return;
     
     if (user) {
-        // Usuario autenticado
-        nav.innerHTML = `
+        // Obtener rol del usuario para mostrar enlace de usuarios si es admin
+        try {
+            const token = await user.getIdToken();
+            const response = await fetch(`${API_URL}/auth/me`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.ok) {
+                const userData = await response.json();
+                currentUserRole = userData.role || 'user';
+            }
+        } catch (error) {
+            console.error('Error obteniendo rol del usuario:', error);
+            currentUserRole = 'user';
+        }
+        
+        // Usuario autenticado - mostrar enlaces según rol
+        let navHTML = `
             <a href="/dashboard" class="nav-link">Dashboard</a>
             <a href="/documents" class="nav-link">Documentos</a>
             <a href="/profile" class="nav-link">Perfil</a>
-            <button id="logout-btn" class="btn btn-outline">Cerrar Sesión</button>
         `;
+        
+        // Verificar si hay admins para decidir si mostrar enlace de usuarios
+        try {
+            const token = await user.getIdToken();
+            const usersResponse = await fetch(`${API_URL}/auth/users`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (usersResponse.ok) {
+                const allUsers = await usersResponse.json();
+                const hasAnyAdmin = allUsers.some(u => u.role === 'admin');
+                
+                // Mostrar enlace de usuarios si es admin O si no hay ningún admin (para crear el primero)
+                if (currentUserRole === 'admin' || !hasAnyAdmin) {
+                    navHTML += `<a href="/users" class="nav-link">Usuarios</a>`;
+                }
+            } else if (currentUserRole === 'admin') {
+                // Fallback: mostrar si ya sabemos que es admin
+                navHTML += `<a href="/users" class="nav-link">Usuarios</a>`;
+            }
+        } catch (error) {
+            console.error('Error verificando usuarios:', error);
+            // Si es admin conocido, mostrar enlace de todas formas
+            if (currentUserRole === 'admin') {
+                navHTML += `<a href="/users" class="nav-link">Usuarios</a>`;
+            }
+        }
+        
+        navHTML += `<button id="logout-btn" class="btn btn-outline">Cerrar Sesión</button>`;
+        
+        nav.innerHTML = navHTML;
         
         // Agregar listener al botón de logout
         const logoutBtn = document.getElementById('logout-btn');
@@ -81,6 +134,7 @@ function updateUI(user) {
             <a href="/" class="nav-link">Iniciar Sesión</a>
             <a href="/register" class="nav-link">Registrarse</a>
         `;
+        currentUserRole = null;
     }
 }
 
@@ -431,6 +485,18 @@ async function loadProfile() {
             document.getElementById('profile-created').value = userData.createdAt || 'N/A';
             document.getElementById('profile-last-login').value = userData.lastLogin || 'N/A';
             
+            // Mostrar rol con traducción al español
+            const roleElement = document.getElementById('profile-role');
+            if (roleElement) {
+                const role = userData.role || 'user';
+                const roleTranslations = {
+                    'admin': 'Administrador',
+                    'moderador': 'Moderador',
+                    'user': 'Usuario'
+                };
+                roleElement.value = roleTranslations[role] || role;
+            }
+            
             if (userData.picture) {
                 document.getElementById('user-avatar').src = userData.picture;
             }
@@ -755,6 +821,13 @@ function initSearch() {
 async function loadDocuments(collection) {
     if (!collection) return;
     
+    // Resetear navegación
+    currentCollection = collection;
+    currentDocId = null;
+    currentSubcollection = null;
+    currentNavigationPath = [{ type: 'collection', name: collection }];
+    updateBreadcrumb();
+    
     if (!auth) auth = window.firebaseAuth;
     if (!currentUser && auth) currentUser = auth.currentUser;
     
@@ -911,6 +984,13 @@ function displayDocuments(documents, collection) {
                     <p style="margin: 0; color: var(--text-light); font-size: 0.9rem;">Colección: ${collection}</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-secondary btn-sm subcollections-btn" 
+                            data-doc-id="${docId}" 
+                            data-collection="${collection}"
+                            onclick="viewSubcollections('${collection}', '${docId}')"
+                            title="Ver subcolecciones">
+                        📁 Subcolecciones
+                    </button>
                     <button class="btn btn-primary btn-sm save-doc-btn" 
                             data-doc-id="${docId}" 
                             data-collection="${collection}"
@@ -934,6 +1014,637 @@ function displayDocuments(documents, collection) {
     // Agregar listeners para cambios en tiempo real (opcional)
     setupFieldChangeListeners();
 }
+
+// Variables globales para navegación de subcolecciones
+let currentNavigationPath = [];
+let currentCollection = null;
+let currentDocId = null;
+let currentSubcollection = null;
+
+// Ver subcolecciones de un documento
+window.viewSubcollections = async function(collection, docId) {
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        // Actualizar navegación actual
+        currentCollection = collection;
+        currentDocId = docId;
+        currentSubcollection = null;
+        currentNavigationPath = [
+            { type: 'collection', name: collection },
+            { type: 'document', name: docId, collection, docId }
+        ];
+        
+        // Mostrar breadcrumb
+        updateBreadcrumb();
+        
+        // Cargar subcolecciones
+        await loadSubcollections(collection, docId);
+    } catch (error) {
+        console.error('Error cargando subcolecciones:', error);
+        showError('Error al cargar subcolecciones: ' + error.message);
+    }
+};
+
+// Cargar subcolecciones de un documento
+async function loadSubcollections(collection, docId) {
+    const documentsList = document.getElementById('documents-list');
+    if (!documentsList) return;
+    
+    documentsList.innerHTML = '<p class="empty-state">Cargando subcolecciones...</p>';
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const token = await currentUser.getIdToken();
+        
+        // Obtener lista de subcolecciones
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/subcollections`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.ok) {
+            const subcollections = await response.json();
+            displaySubcollections(subcollections, collection, docId);
+        } else if (response.status === 404) {
+            // No hay subcolecciones, mostrar opción para crear
+            displaySubcollections([], collection, docId);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al cargar subcolecciones');
+        }
+    } catch (error) {
+        console.error('Error cargando subcolecciones:', error);
+        documentsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: ${error.message}</p>`;
+    }
+}
+
+// Mostrar subcolecciones
+function displaySubcollections(subcollections, collection, docId) {
+    const documentsList = document.getElementById('documents-list');
+    if (!documentsList) return;
+    
+    documentsList.innerHTML = '';
+    
+    // Botón para crear nueva subcolección
+    const createBtn = document.createElement('button');
+    createBtn.className = 'btn btn-primary';
+    createBtn.textContent = '+ Nueva Subcolección';
+    createBtn.onclick = () => createNewSubcollection(collection, docId);
+    createBtn.style.marginBottom = '1rem';
+    documentsList.appendChild(createBtn);
+    
+    if (!subcollections || subcollections.length === 0) {
+        const emptyMsg = document.createElement('p');
+        emptyMsg.className = 'empty-state';
+        emptyMsg.textContent = 'No hay subcolecciones. Crea una nueva para comenzar.';
+        documentsList.appendChild(emptyMsg);
+        return;
+    }
+    
+    // Mostrar lista de subcolecciones
+    subcollections.forEach(subcol => {
+        const subcolCard = document.createElement('div');
+        subcolCard.className = 'document-card';
+        subcolCard.style.cssText = `
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            margin-bottom: 1rem;
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+        `;
+        
+        subcolCard.onmouseenter = () => subcolCard.style.transform = 'translateY(-2px)';
+        subcolCard.onmouseleave = () => subcolCard.style.transform = 'translateY(0)';
+        subcolCard.onclick = () => openSubcollection(collection, docId, subcol.id);
+        
+        subcolCard.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h3 style="margin: 0 0 0.5rem 0; color: var(--primary-color);">
+                        📁 ${escapeHtml(subcol.id)}
+                    </h3>
+                    <p style="margin: 0; color: var(--text-light); font-size: 0.9rem;">
+                        Ruta: ${escapeHtml(subcol.path)}
+                    </p>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-primary btn-sm" 
+                            onclick="event.stopPropagation(); openSubcollection('${collection}', '${docId}', '${escapeHtml(subcol.id)}')">
+                        Abrir
+                    </button>
+                    <button class="btn btn-danger btn-sm" 
+                            onclick="event.stopPropagation(); deleteSubcollection('${collection}', '${docId}', '${escapeHtml(subcol.id)}')">
+                        🗑️ Eliminar
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        documentsList.appendChild(subcolCard);
+    });
+}
+
+// Abrir una subcolección y mostrar sus documentos
+window.openSubcollection = async function(collection, docId, subcollection) {
+    try {
+        currentCollection = collection;
+        currentDocId = docId;
+        currentSubcollection = subcollection;
+        currentNavigationPath = [
+            { type: 'collection', name: collection },
+            { type: 'document', name: docId, collection, docId },
+            { type: 'subcollection', name: subcollection, collection, docId, subcollection }
+        ];
+        
+        updateBreadcrumb();
+        await loadSubcollectionDocuments(collection, docId, subcollection);
+    } catch (error) {
+        console.error('Error abriendo subcolección:', error);
+        showError('Error al abrir subcolección: ' + error.message);
+    }
+};
+
+// Cargar documentos de una subcolección
+async function loadSubcollectionDocuments(collection, docId, subcollection) {
+    const documentsList = document.getElementById('documents-list');
+    if (!documentsList) return;
+    
+    documentsList.innerHTML = '<p class="empty-state">Cargando documentos...</p>';
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const token = await currentUser.getIdToken();
+        
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.ok) {
+            const documents = await response.json();
+            displaySubcollectionDocuments(documents, collection, docId, subcollection);
+        } else if (response.status === 404) {
+            documentsList.innerHTML = '<p class="empty-state">La subcolección no existe o está vacía.</p>';
+            // Mostrar opción para crear documento
+            const createBtn = document.createElement('button');
+            createBtn.className = 'btn btn-primary';
+            createBtn.textContent = '+ Crear Primer Documento';
+            createBtn.onclick = () => createSubcollectionDocument(collection, docId, subcollection);
+            documentsList.appendChild(createBtn);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al cargar documentos');
+        }
+    } catch (error) {
+        console.error('Error cargando documentos de subcolección:', error);
+        documentsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: ${error.message}</p>`;
+    }
+}
+
+// Mostrar documentos de una subcolección
+function displaySubcollectionDocuments(documents, collection, docId, subcollection) {
+    const documentsList = document.getElementById('documents-list');
+    if (!documentsList) return;
+    
+    documentsList.innerHTML = '';
+    
+    // Botón para crear nuevo documento en subcolección
+    const createBtn = document.createElement('button');
+    createBtn.className = 'btn btn-primary';
+    createBtn.textContent = '+ Nuevo Documento';
+    createBtn.onclick = () => createSubcollectionDocument(collection, docId, subcollection);
+    createBtn.style.marginBottom = '1rem';
+    documentsList.appendChild(createBtn);
+    
+    if (!documents || documents.length === 0) {
+        const emptyMsg = document.createElement('p');
+        emptyMsg.className = 'empty-state';
+        emptyMsg.textContent = 'No hay documentos en esta subcolección.';
+        documentsList.appendChild(emptyMsg);
+        return;
+    }
+    
+    // Mostrar documentos con la misma funcionalidad que documentos principales
+    documents.forEach((doc, index) => {
+        const docCard = document.createElement('div');
+        docCard.className = 'document-card';
+        docCard.setAttribute('data-doc-id', doc.id || `doc-${index}`);
+        docCard.style.cssText = `
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            margin-bottom: 1rem;
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+        `;
+        
+        const subDocId = doc.id || `doc-${index}`;
+        const docData = { ...doc };
+        delete docData.id;
+        
+        const formHTML = createEditableForm(docData, subDocId, collection);
+        
+        docCard.innerHTML = `
+            <div class="doc-header" style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+                <div>
+                    <h3 style="margin: 0 0 0.5rem 0; color: var(--primary-color); word-break: break-word;">ID: ${subDocId}</h3>
+                    <p style="margin: 0; color: var(--text-light); font-size: 0.9rem;">
+                        Subcolección: ${subcollection}
+                    </p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-primary btn-sm" 
+                            onclick="saveSubcollectionDocumentFields('${collection}', '${docId}', '${subcollection}', '${subDocId}')">
+                        💾 Guardar
+                    </button>
+                    <button class="btn btn-danger btn-sm" 
+                            onclick="deleteSubcollectionDocument('${collection}', '${docId}', '${subcollection}', '${subDocId}')">
+                        🗑️ Eliminar
+                    </button>
+                </div>
+            </div>
+            <form class="doc-fields-form" data-doc-id="${subDocId}" data-collection="${collection}">
+                ${formHTML}
+            </form>
+        `;
+        
+        documentsList.appendChild(docCard);
+    });
+}
+
+// Actualizar breadcrumb
+function updateBreadcrumb() {
+    const breadcrumbContainer = document.getElementById('breadcrumb-container');
+    const breadcrumb = document.getElementById('breadcrumb');
+    
+    if (!breadcrumbContainer || !breadcrumb) return;
+    
+    if (currentNavigationPath.length <= 1) {
+        breadcrumbContainer.style.display = 'none';
+        return;
+    }
+    
+    breadcrumbContainer.style.display = 'block';
+    breadcrumb.innerHTML = '';
+    
+    currentNavigationPath.forEach((item, index) => {
+        const span = document.createElement('span');
+        
+        if (index < currentNavigationPath.length - 1) {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = item.name;
+            link.onclick = (e) => {
+                e.preventDefault();
+                navigateToBreadcrumb(index);
+            };
+            span.appendChild(link);
+            span.appendChild(document.createTextNode(' / '));
+        } else {
+            span.textContent = item.name;
+            span.style.fontWeight = 'bold';
+        }
+        
+        breadcrumb.appendChild(span);
+    });
+}
+
+// Navegar a un punto del breadcrumb
+function navigateToBreadcrumb(index) {
+    const item = currentNavigationPath[index];
+    
+    if (item.type === 'collection') {
+        // Volver a la colección principal
+        currentCollection = item.name;
+        currentDocId = null;
+        currentSubcollection = null;
+        currentNavigationPath = [{ type: 'collection', name: item.name }];
+        updateBreadcrumb();
+        loadDocuments(item.name);
+    } else if (item.type === 'document') {
+        // Volver al documento
+        currentCollection = item.collection;
+        currentDocId = item.docId;
+        currentSubcollection = null;
+        currentNavigationPath = [
+            { type: 'collection', name: item.collection },
+            { type: 'document', name: item.docId, collection: item.collection, docId: item.docId }
+        ];
+        updateBreadcrumb();
+        loadSubcollections(item.collection, item.docId);
+    } else if (item.type === 'subcollection') {
+        // Volver a la subcolección
+        currentCollection = item.collection;
+        currentDocId = item.docId;
+        currentSubcollection = item.subcollection;
+        currentNavigationPath = [
+            { type: 'collection', name: item.collection },
+            { type: 'document', name: item.docId, collection: item.collection, docId: item.docId },
+            { type: 'subcollection', name: item.subcollection, collection: item.collection, docId: item.docId, subcollection: item.subcollection }
+        ];
+        updateBreadcrumb();
+        loadSubcollectionDocuments(item.collection, item.docId, item.subcollection);
+    }
+}
+
+// Crear nueva subcolección
+async function createNewSubcollection(collection, docId) {
+    const subcollectionName = prompt('Ingresa el nombre de la nueva subcolección:');
+    
+    if (!subcollectionName || !subcollectionName.trim()) {
+        return;
+    }
+    
+    // Crear un documento vacío en la subcolección para crearla
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const token = await currentUser.getIdToken();
+        
+        // Crear un documento inicial en la subcolección
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollectionName}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                data: {
+                    _created: new Date().toISOString(),
+                    _message: 'Subcolección creada. Este documento inicial puede ser eliminado.'
+                }
+            })
+        });
+        
+        if (response.ok) {
+            showSuccess('Subcolección creada exitosamente');
+            await loadSubcollections(collection, docId);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al crear subcolección');
+        }
+    } catch (error) {
+        console.error('Error creando subcolección:', error);
+        showError('Error al crear subcolección: ' + error.message);
+    }
+}
+
+// Crear documento en subcolección
+function createSubcollectionDocument(collection, docId, subcollection) {
+    const modal = document.getElementById('doc-modal');
+    const form = document.getElementById('doc-form');
+    const modalTitle = document.getElementById('modal-title');
+    const collectionInput = document.getElementById('modal-collection');
+    const docIdInput = document.getElementById('modal-doc-id');
+    
+    if (modalTitle) modalTitle.textContent = `Nuevo Documento en ${subcollection}`;
+    if (collectionInput) {
+        collectionInput.value = `${collection}/${docId}/${subcollection}`;
+        collectionInput.readOnly = true;
+    }
+    if (docIdInput) {
+        docIdInput.disabled = false;
+        docIdInput.placeholder = 'Dejar vacío para auto-generar';
+    }
+    
+    // Configurar submit del formulario
+    if (form) {
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            
+            const dataInput = document.getElementById('modal-data');
+            let data = {};
+            
+            try {
+                if (dataInput.value.trim()) {
+                    data = JSON.parse(dataInput.value);
+                }
+            } catch (error) {
+                showError('JSON inválido: ' + error.message);
+                return;
+            }
+            
+            try {
+                if (!auth) auth = window.firebaseAuth;
+                if (!currentUser && auth) currentUser = auth.currentUser;
+                if (!currentUser) {
+                    showError('Debes iniciar sesión');
+                    return;
+                }
+                
+                const token = await currentUser.getIdToken();
+                const subDocId = docIdInput.value.trim() || undefined;
+                
+                const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        docId: subDocId,
+                        data: data
+                    })
+                });
+                
+                if (response.ok) {
+                    showSuccess('Documento creado exitosamente');
+                    modal.style.display = 'none';
+                    if (form) {
+                        form.reset();
+                        form.onsubmit = null;
+                    }
+                    await loadSubcollectionDocuments(collection, docId, subcollection);
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Error al crear documento');
+                }
+            } catch (error) {
+                console.error('Error creando documento:', error);
+                showError('Error al crear documento: ' + error.message);
+            }
+        };
+    }
+    
+    if (modal) modal.style.display = 'block';
+}
+
+// Guardar campos de documento en subcolección
+window.saveSubcollectionDocumentFields = async function(collection, docId, subcollection, subDocId) {
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const form = document.querySelector(`form[data-doc-id="${subDocId}"]`);
+        if (!form) {
+            showError('Formulario no encontrado');
+            return;
+        }
+        
+        const inputs = form.querySelectorAll('.field-input');
+        const updateData = {};
+        
+        inputs.forEach(input => {
+            const fieldName = input.getAttribute('data-field');
+            let value = input.value;
+            
+            if (input.type === 'number') {
+                value = input.value === '' ? null : parseFloat(value);
+            } else if (input.classList.contains('json-field')) {
+                try {
+                    value = JSON.parse(value || '{}');
+                } catch {
+                    value = value;
+                }
+            } else if (input.tagName === 'SELECT') {
+                if (input.value === 'true') value = true;
+                else if (input.value === 'false') value = false;
+                else value = input.value;
+            }
+            
+            if (value === '') value = null;
+            updateData[fieldName] = value;
+        });
+        
+        const token = await currentUser.getIdToken();
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}/${subDocId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(updateData)
+        });
+        
+        if (response.ok) {
+            showSuccess('Documento actualizado exitosamente');
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al actualizar documento');
+        }
+    } catch (error) {
+        console.error('Error guardando documento:', error);
+        showError('Error al guardar: ' + error.message);
+    }
+};
+
+// Eliminar documento de subcolección
+window.deleteSubcollectionDocument = async function(collection, docId, subcollection, subDocId) {
+    if (!confirm(`¿Estás seguro de eliminar el documento "${subDocId}"?`)) {
+        return;
+    }
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const token = await currentUser.getIdToken();
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}/${subDocId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.ok) {
+            showSuccess('Documento eliminado exitosamente');
+            await loadSubcollectionDocuments(collection, docId, subcollection);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al eliminar documento');
+        }
+    } catch (error) {
+        console.error('Error eliminando documento:', error);
+        showError('Error al eliminar: ' + error.message);
+    }
+};
+
+// Eliminar subcolección completa (eliminar todos sus documentos)
+window.deleteSubcollection = async function(collection, docId, subcollection) {
+    if (!confirm(`¿Estás seguro de eliminar la subcolección "${subcollection}" y todos sus documentos?`)) {
+        return;
+    }
+    
+    try {
+        // Primero obtener todos los documentos
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            showError('Debes iniciar sesión');
+            return;
+        }
+        
+        const token = await currentUser.getIdToken();
+        const response = await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.ok) {
+            const documents = await response.json();
+            
+            // Eliminar todos los documentos
+            for (const doc of documents) {
+                await fetch(`${API_URL}/api/${collection}/${docId}/${subcollection}/${doc.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+            }
+            
+            showSuccess('Subcolección eliminada exitosamente');
+            await loadSubcollections(collection, docId);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al eliminar subcolección');
+        }
+    } catch (error) {
+        console.error('Error eliminando subcolección:', error);
+        showError('Error al eliminar subcolección: ' + error.message);
+    }
+};
 
 // Configurar listeners para detectar cambios en los campos
 function setupFieldChangeListeners() {
@@ -1240,6 +1951,315 @@ function getErrorMessage(code) {
     return errors[code] || 'Error desconocido: ' + code;
 }
 
+// Inicializar página de usuarios
+function initUsers() {
+    // Esperar a que Firebase esté listo
+    let attempts = 0;
+    const maxAttempts = 30;
+    
+    function checkAndInit() {
+        attempts++;
+        
+        if (!auth) auth = window.firebaseAuth;
+        
+        if (auth && auth.currentUser) {
+            currentUser = auth.currentUser;
+            loadUsers();
+            initUsersFilters();
+        } else if (!auth && attempts < maxAttempts) {
+            setTimeout(checkAndInit, 100);
+        } else if (auth && !auth.currentUser && attempts >= 5) {
+            console.log('No hay usuario autenticado, redirigiendo...');
+            window.location.href = '/';
+            return;
+        } else if (attempts < maxAttempts) {
+            setTimeout(checkAndInit, 100);
+        }
+    }
+    
+    checkAndInit();
+}
+
+// Cargar lista de usuarios
+async function loadUsers() {
+    const loadingMsg = document.getElementById('loading-message');
+    const usersList = document.getElementById('users-list');
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        // Verificar que el usuario sea admin
+        const token = await currentUser.getIdToken();
+        const userResponse = await fetch(`${API_URL}/auth/me`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (!userResponse.ok) {
+            throw new Error('Error obteniendo información del usuario');
+        }
+        
+        const userData = await userResponse.json();
+        
+        // Verificar si hay algún admin en el sistema
+        const allUsersResponse = await fetch(`${API_URL}/auth/users`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        let hasAnyAdmin = false;
+        if (allUsersResponse.ok) {
+            const allUsers = await allUsersResponse.json();
+            hasAnyAdmin = allUsers.some(u => u.role === 'admin');
+        }
+        
+        // Si no hay ningún admin, permitir acceso (para crear el primero)
+        if (!hasAnyAdmin) {
+            console.log('No hay administradores en el sistema. Permitiendo acceso para crear el primero.');
+        } else if (userData.role !== 'admin') {
+            showError('No tienes permisos para acceder a esta página');
+            setTimeout(() => {
+                window.location.href = '/dashboard';
+            }, 2000);
+            return;
+        }
+        
+        if (loadingMsg) loadingMsg.style.display = 'block';
+        
+        // Obtener lista de usuarios
+        const response = await fetch(`${API_URL}/auth/users`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.ok) {
+            const users = await response.json();
+            const hasAnyAdmin = users.some(u => u.role === 'admin');
+            
+            // Mostrar advertencia si no hay admins
+            const noAdminWarning = document.getElementById('no-admin-warning');
+            if (noAdminWarning) {
+                noAdminWarning.style.display = hasAnyAdmin ? 'none' : 'block';
+            }
+            
+            displayUsers(users);
+            updateUsersStats(users);
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al cargar usuarios');
+        }
+    } catch (error) {
+        console.error('Error cargando usuarios:', error);
+        showError('Error al cargar usuarios: ' + error.message);
+    } finally {
+        if (loadingMsg) loadingMsg.style.display = 'none';
+    }
+}
+
+// Mostrar usuarios en la lista
+function displayUsers(users) {
+    const usersList = document.getElementById('users-list');
+    if (!usersList) return;
+    
+    if (!users || users.length === 0) {
+        usersList.innerHTML = '<p class="empty-state">No hay usuarios registrados.</p>';
+        return;
+    }
+    
+    usersList.innerHTML = '';
+    
+    users.forEach(user => {
+        const userCard = document.createElement('div');
+        userCard.className = 'user-card';
+        userCard.setAttribute('data-user-id', user.uid);
+        userCard.setAttribute('data-role', user.role || 'user');
+        
+        const role = user.role || 'user';
+        const roleTranslations = {
+            'admin': 'Administrador',
+            'moderador': 'Moderador',
+            'user': 'Usuario'
+        };
+        
+        const createdAt = user.createdAt ? new Date(user.createdAt).toLocaleDateString('es-ES') : 'N/A';
+        const lastLogin = user.lastLogin ? new Date(user.lastLogin).toLocaleDateString('es-ES') : 'Nunca';
+        
+        userCard.innerHTML = `
+            <div class="user-info">
+                <div class="user-name">${escapeHtml(user.displayName || user.email || 'Sin nombre')}</div>
+                <div class="user-email">${escapeHtml(user.email || 'Sin email')}</div>
+                <div class="user-meta">
+                    <span class="user-meta-item">Registrado: ${createdAt}</span>
+                    <span class="user-meta-item">Último acceso: ${lastLogin}</span>
+                </div>
+            </div>
+            <div class="user-actions">
+                <div class="role-selector">
+                    <label>Rol:</label>
+                    <select class="role-select" data-user-id="${escapeHtml(user.uid)}" data-current-role="${role}">
+                        <option value="user" ${role === 'user' ? 'selected' : ''}>Usuario</option>
+                        <option value="moderador" ${role === 'moderador' ? 'selected' : ''}>Moderador</option>
+                        <option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm save-role-btn" 
+                            data-user-id="${escapeHtml(user.uid)}"
+                            onclick="updateUserRole('${escapeHtml(user.uid)}', this)">
+                        Guardar
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        usersList.appendChild(userCard);
+    });
+    
+    // Agregar listeners para cambio de roles
+    const roleSelects = document.querySelectorAll('.role-select');
+    roleSelects.forEach(select => {
+        select.addEventListener('change', function() {
+            const saveBtn = this.nextElementSibling;
+            const currentRole = this.getAttribute('data-current-role');
+            const newRole = this.value;
+            
+            // Habilitar botón solo si el rol cambió
+            if (currentRole !== newRole) {
+                saveBtn.disabled = false;
+                saveBtn.style.opacity = '1';
+            } else {
+                saveBtn.disabled = true;
+                saveBtn.style.opacity = '0.5';
+            }
+        });
+    });
+}
+
+// Actualizar rol de usuario
+window.updateUserRole = async function(userId, buttonElement) {
+    try {
+        const select = buttonElement.previousElementSibling;
+        const newRole = select.value;
+        
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        // Confirmar cambio
+        if (!confirm(`¿Estás seguro de cambiar el rol del usuario a "${newRole}"?`)) {
+            return;
+        }
+        
+        buttonElement.disabled = true;
+        buttonElement.textContent = 'Guardando...';
+        
+        const token = await currentUser.getIdToken();
+        const response = await fetch(`${API_URL}/auth/users/role`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                uid: userId,
+                role: newRole
+            })
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showSuccess(`Rol actualizado exitosamente a "${newRole}"`);
+            
+            // Actualizar atributo current-role
+            select.setAttribute('data-current-role', newRole);
+            buttonElement.disabled = true;
+            buttonElement.style.opacity = '0.5';
+            buttonElement.textContent = 'Guardar';
+            
+            // Actualizar estadísticas
+            loadUsers();
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al actualizar rol');
+        }
+    } catch (error) {
+        console.error('Error actualizando rol:', error);
+        showError('Error al actualizar rol: ' + error.message);
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.textContent = 'Guardar';
+        }
+    }
+};
+
+// Actualizar estadísticas de usuarios
+function updateUsersStats(users) {
+    const totalUsers = users.length;
+    const adminCount = users.filter(u => u.role === 'admin').length;
+    const moderatorCount = users.filter(u => u.role === 'moderador').length;
+    const userCount = users.filter(u => u.role === 'user' || !u.role).length;
+    
+    const totalEl = document.getElementById('total-users');
+    const adminEl = document.getElementById('admin-count');
+    const moderatorEl = document.getElementById('moderator-count');
+    const userEl = document.getElementById('user-count');
+    
+    if (totalEl) totalEl.textContent = totalUsers;
+    if (adminEl) adminEl.textContent = adminCount;
+    if (moderatorEl) moderatorEl.textContent = moderatorCount;
+    if (userEl) userEl.textContent = userCount;
+}
+
+// Inicializar filtros de usuarios
+function initUsersFilters() {
+    const searchInput = document.getElementById('users-search');
+    const roleFilter = document.getElementById('role-filter');
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', filterUsers);
+    }
+    
+    if (roleFilter) {
+        roleFilter.addEventListener('change', filterUsers);
+    }
+}
+
+// Filtrar usuarios
+function filterUsers() {
+    const searchTerm = document.getElementById('users-search')?.value.toLowerCase() || '';
+    const selectedRole = document.getElementById('role-filter')?.value || '';
+    const userCards = document.querySelectorAll('.user-card');
+    
+    userCards.forEach(card => {
+        const userInfo = card.querySelector('.user-info');
+        const userName = userInfo?.querySelector('.user-name')?.textContent.toLowerCase() || '';
+        const userEmail = userInfo?.querySelector('.user-email')?.textContent.toLowerCase() || '';
+        const userRole = card.getAttribute('data-role') || '';
+        
+        const matchesSearch = !searchTerm || 
+            userName.includes(searchTerm) || 
+            userEmail.includes(searchTerm) || 
+            userRole.includes(searchTerm);
+        
+        const matchesRole = !selectedRole || userRole === selectedRole;
+        
+        if (matchesSearch && matchesRole) {
+            card.style.display = '';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
 // Función para inicializar la página cuando Firebase esté listo
 function initPage() {
     const path = window.location.pathname;
@@ -1257,6 +2277,8 @@ function initPage() {
         initProfile();
     } else if (path === '/documents') {
         initDocuments();
+    } else if (path === '/users') {
+        initUsers();
     }
 }
 

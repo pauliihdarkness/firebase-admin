@@ -42,5 +42,13 @@ viewRouter.get("/documents", (req, res) => {
     });
 });
 
+// Gestión de usuarios (solo admin - la verificación se hace en el frontend)
+viewRouter.get("/users", (req, res) => {
+    res.render("users", { 
+        title: "Usuarios",
+        page: "users"
+    });
+});
+
 export default viewRouter;
 

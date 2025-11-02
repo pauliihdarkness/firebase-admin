@@ -5,7 +5,8 @@ import {
     updateUser,
     deleteUser,
     getAllUsers,
-    verifyGoogleToken
+    verifyGoogleToken,
+    updateUserRole
 } from "../controllers/authController.js";
 import { verifyFirebaseToken, isAdmin } from "../middleware/authMiddleware.js";
 
@@ -20,8 +21,9 @@ authRouter.get("/me", verifyFirebaseToken, getCurrentUser);
 authRouter.put("/me", verifyFirebaseToken, updateUser);
 authRouter.delete("/me", verifyFirebaseToken, deleteUser);
 
-// Rutas de administrador
-authRouter.get("/users", verifyFirebaseToken, isAdmin, getAllUsers);
+// Rutas de administrador (o primer usuario si no hay admins)
+authRouter.get("/users", verifyFirebaseToken, getAllUsers);
+authRouter.put("/users/role", verifyFirebaseToken, updateUserRole);
 
 export default authRouter;
 
