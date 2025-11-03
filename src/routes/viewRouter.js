@@ -50,5 +50,13 @@ viewRouter.get("/users", (req, res) => {
     });
 });
 
+// Chat con otros usuarios
+viewRouter.get("/chat", (req, res) => {
+    res.render("chat", { 
+        title: "Chat",
+        page: "chat"
+    });
+});
+
 export default viewRouter;
 

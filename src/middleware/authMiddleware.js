@@ -4,9 +4,11 @@ import db from '../firebaseConfig.js';
 // Middleware para verificar el token de Firebase
 export const verifyFirebaseToken = async (req, res, next) => {
     try {
+        console.log('🔐 verifyFirebaseToken llamado para:', req.method, req.path);
         const authHeader = req.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            console.log('❌ Token no proporcionado');
             return res.status(401).json({ error: 'Token no proporcionado' });
         }
 
@@ -17,9 +19,10 @@ export const verifyFirebaseToken = async (req, res, next) => {
         
         // Agregar la información del usuario a la request
         req.user = decodedToken;
+        console.log('✅ Token verificado, usuario:', decodedToken.uid);
         next();
     } catch (error) {
-        console.error('Error verificando token:', error);
+        console.error('❌ Error verificando token:', error);
         res.status(401).json({ error: 'Token inválido o expirado' });
     }
 };

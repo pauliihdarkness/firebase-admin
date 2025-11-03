@@ -212,11 +212,41 @@ export const updateUserRole = async (req, res) => {
     }
 };
 
-// Verificar token de Google
-export const verifyGoogleToken = async (req, res) => {
+// Verificar token y guardar/actualizar usuario en Firestore
+export const verifyAndSaveUser = async (req, res) => {
     try {
         // El token ya fue verificado por el middleware
-        const { uid, email, name, picture } = req.user;
+        const { uid, email, name, picture, firebase } = req.user;
+        const displayName = name || req.user.displayName || email?.split('@')[0] || 'Usuario';
+        const photoURL = picture || req.user.picture || req.user.photoURL || null;
+
+        // Determinar el proveedor de autenticación
+        let provider = 'email'; // Por defecto
+        
+        // Intentar detectar el proveedor desde diferentes ubicaciones del token
+        const firebaseInfo = req.user.firebase || {};
+        
+        if (firebaseInfo.sign_in_provider) {
+            // Formato: "google.com", "github.com", "password"
+            const providerName = firebaseInfo.sign_in_provider;
+            if (providerName === 'google.com') {
+                provider = 'google';
+            } else if (providerName === 'github.com') {
+                provider = 'github';
+            } else if (providerName === 'password') {
+                provider = 'email';
+            }
+        } else if (firebaseInfo.identities) {
+            // Detectar proveedor desde las identidades
+            const identityKeys = Object.keys(firebaseInfo.identities);
+            if (identityKeys.includes('google.com')) {
+                provider = 'google';
+            } else if (identityKeys.includes('github.com')) {
+                provider = 'github';
+            } else if (identityKeys.includes('password')) {
+                provider = 'email';
+            }
+        }
 
         // Verificar si el usuario existe en Firestore
         const userDoc = await db.collection('users').doc(uid).get();
@@ -224,19 +254,41 @@ export const verifyGoogleToken = async (req, res) => {
         if (!userDoc.exists) {
             // Crear usuario si no existe
             await db.collection('users').doc(uid).set({
-                email,
-                displayName: name,
-                picture,
+                email: email || null,
+                displayName: displayName,
+                picture: photoURL,
                 role: 'user', // Rol por defecto: user, admin, moderador
                 createdAt: new Date().toISOString(),
                 lastLogin: new Date().toISOString(),
-                provider: 'google'
+                provider: provider,
+                emailVerified: req.user.email_verified || false
             });
         } else {
-            // Actualizar lastLogin
-            await db.collection('users').doc(uid).update({
-                lastLogin: new Date().toISOString()
-            });
+            // Actualizar información existente
+            const userData = userDoc.data();
+            const updateData = {
+                lastLogin: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            // Actualizar campos si han cambiado o no existen
+            if (email && (!userData.email || userData.email !== email)) {
+                updateData.email = email;
+            }
+            if (displayName && (!userData.displayName || userData.displayName !== displayName)) {
+                updateData.displayName = displayName;
+            }
+            if (photoURL && (!userData.picture || userData.picture !== photoURL)) {
+                updateData.picture = photoURL;
+            }
+            if (provider && (!userData.provider || userData.provider !== provider)) {
+                updateData.provider = provider;
+            }
+            if (req.user.email_verified !== undefined) {
+                updateData.emailVerified = req.user.email_verified;
+            }
+
+            await db.collection('users').doc(uid).update(updateData);
         }
 
         res.json({
@@ -244,13 +296,26 @@ export const verifyGoogleToken = async (req, res) => {
             user: {
                 uid,
                 email,
-                name,
-                picture
+                name: displayName,
+                picture: photoURL,
+                provider
             }
         });
     } catch (error) {
-        console.error('Error verificando token de Google:', error);
+        console.error('Error verificando y guardando usuario:', error);
         res.status(500).json({ error: error.message });
     }
+};
+
+// Verificar token de Google (mantener compatibilidad)
+export const verifyGoogleToken = async (req, res) => {
+    // Redirigir a la función genérica
+    return verifyAndSaveUser(req, res);
+};
+
+// Verificar token de GitHub
+export const verifyGithubToken = async (req, res) => {
+    // Redirigir a la función genérica
+    return verifyAndSaveUser(req, res);
 };
 

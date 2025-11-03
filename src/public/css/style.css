@@ -141,6 +141,21 @@ body {
     box-shadow: var(--shadow);
 }
 
+.btn-github {
+    background: #24292e;
+    color: white;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.btn-github:hover {
+    background: #181b1f;
+    box-shadow: var(--shadow);
+}
+
 .btn-block {
     width: 100%;
 }

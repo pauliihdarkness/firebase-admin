@@ -29,4 +29,5 @@ Thumbs.db
 # Archivos temporales
 *.tmp
 .cache/
+src/public/js/app.js
 COMO_ASIGNAR_ADMIN.md

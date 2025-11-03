@@ -10,15 +10,33 @@ function initializeApp() {
     
     if (auth) {
         // Observar cambios en el estado de autenticación
-        auth.onAuthStateChanged((user) => {
+        auth.onAuthStateChanged(async (user) => {
             currentUser = user;
+            
+            // Si hay un usuario, obtener y verificar el token
+            if (user) {
+                try {
+                    // Obtener token para asegurar que está disponible
+                    const token = await user.getIdToken(true);
+                    if (token) {
+                        console.log('Token obtenido correctamente después de cambio de estado');
+                        // Guardar usuario en Firestore si aún no está guardado
+                        await verifyAndSaveUserToBackend(token).catch(err => {
+                            console.warn('Error al guardar usuario en backend (no crítico):', err);
+                        });
+                    }
+                } catch (tokenError) {
+                    console.error('Error obteniendo token después de cambio de estado:', tokenError);
+                }
+            }
+            
             updateUI(user);
             
             // Solo redirigir si estamos en una página protegida y no hay usuario
             // pero esperar un momento para evitar redirecciones prematuras
             setTimeout(() => {
                 const path = window.location.pathname;
-                const protectedPaths = ['/dashboard', '/profile', '/documents', '/users'];
+                const protectedPaths = ['/dashboard', '/profile', '/documents', '/users', '/chat'];
                 
                 if (protectedPaths.includes(path) && !user && auth.currentUser === null) {
                     window.location.href = '/';
@@ -29,6 +47,19 @@ function initializeApp() {
         // Verificar usuario actual inmediatamente
         if (auth.currentUser) {
             currentUser = auth.currentUser;
+            
+            // Intentar obtener token inmediatamente si hay usuario
+            currentUser.getIdToken(true).then(token => {
+                if (token) {
+                    console.log('Token obtenido para usuario actual');
+                    verifyAndSaveUserToBackend(token).catch(err => {
+                        console.warn('Error al guardar usuario en backend (no crítico):', err);
+                    });
+                }
+            }).catch(err => {
+                console.warn('Error obteniendo token para usuario actual:', err);
+            });
+            
             updateUI(auth.currentUser);
         }
     }
@@ -87,6 +118,7 @@ async function updateUI(user) {
         let navHTML = `
             <a href="/dashboard" class="nav-link">Dashboard</a>
             <a href="/documents" class="nav-link">Documentos</a>
+            <a href="/chat" class="nav-link">💬 Chat</a>
             <a href="/profile" class="nav-link">Perfil</a>
         `;
         
@@ -153,6 +185,7 @@ async function handleLogout() {
 function initLoginForm() {
     const loginForm = document.getElementById('login-form');
     const googleBtn = document.getElementById('google-login-btn');
+    const githubBtn = document.getElementById('github-login-btn');
     
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
@@ -162,18 +195,51 @@ function initLoginForm() {
             
             try {
                 if (!auth) auth = window.firebaseAuth;
-                const userCredential = await auth.signInWithEmailAndPassword(email, password);
-                const token = await userCredential.user.getIdToken();
                 
-                // Opcional: enviar token al backend para verificación
-                await verifyTokenWithBackend(token);
+                // Iniciar sesión
+                const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                currentUser = userCredential.user;
+                
+                // Obtener token fresco
+                let token;
+                try {
+                    token = await currentUser.getIdToken(true); // Forzar refresh
+                } catch (tokenError) {
+                    console.error('Error obteniendo token:', tokenError);
+                    throw new Error('Error al obtener token de autenticación');
+                }
+                
+                if (!token) {
+                    throw new Error('No se pudo obtener el token de autenticación');
+                }
+                
+                // Verificar token y guardar/actualizar usuario en Firestore
+                const saved = await verifyAndSaveUserToBackend(token);
+                
+                if (!saved) {
+                    console.warn('No se pudo guardar el usuario en el backend, pero la sesión es válida');
+                }
                 
                 showSuccess('¡Inicio de sesión exitoso!');
-                setTimeout(() => {
-                    window.location.href = '/dashboard';
-                }, 1000);
+                
+                // Esperar un momento para que Firebase actualice el estado
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Verificar que el token sigue siendo válido antes de redirigir
+                try {
+                    const verifyToken = await currentUser.getIdToken(true);
+                    if (verifyToken) {
+                        window.location.href = '/dashboard';
+                    } else {
+                        throw new Error('Token no válido después del login');
+                    }
+                } catch (verifyError) {
+                    console.error('Error verificando token antes de redirigir:', verifyError);
+                    showError('Error al verificar sesión. Por favor, intenta de nuevo.');
+                }
             } catch (error) {
-                showError(getErrorMessage(error.code));
+                console.error('Error en login:', error);
+                showError(getErrorMessage(error.code) || error.message);
             }
         });
     }
@@ -181,12 +247,17 @@ function initLoginForm() {
     if (googleBtn) {
         googleBtn.addEventListener('click', handleGoogleLogin);
     }
+    
+    if (githubBtn) {
+        githubBtn.addEventListener('click', handleGithubLogin);
+    }
 }
 
 // Inicializar formulario de registro
 function initRegisterForm() {
     const registerForm = document.getElementById('register-form');
     const googleBtn = document.getElementById('google-register-btn');
+    const githubBtn = document.getElementById('github-register-btn');
     
     if (registerForm) {
         registerForm.addEventListener('submit', async (e) => {
@@ -227,6 +298,10 @@ function initRegisterForm() {
     if (googleBtn) {
         googleBtn.addEventListener('click', handleGoogleLogin);
     }
+    
+    if (githubBtn) {
+        githubBtn.addEventListener('click', handleGithubLogin);
+    }
 }
 
 // Manejar login con Google
@@ -235,41 +310,149 @@ async function handleGoogleLogin() {
         if (!auth) auth = window.firebaseAuth;
         const provider = new firebase.auth.GoogleAuthProvider();
         const result = await auth.signInWithPopup(provider);
-        const token = await result.user.getIdToken();
+        currentUser = result.user;
+        
+        // Obtener token fresco
+        let token;
+        try {
+            token = await currentUser.getIdToken(true); // Forzar refresh
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            throw new Error('Error al obtener token de autenticación');
+        }
+        
+        if (!token) {
+            throw new Error('No se pudo obtener el token de autenticación');
+        }
         
         // Verificar token con el backend
         const response = await fetch(`${API_URL}/auth/verify-google`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
             }
         });
         
         if (response.ok) {
             showSuccess('¡Autenticación exitosa!');
-            setTimeout(() => {
-                window.location.href = '/dashboard';
-            }, 1000);
+            
+            // Esperar un momento para que Firebase actualice el estado
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Verificar que el token sigue siendo válido
+            try {
+                const verifyToken = await currentUser.getIdToken(true);
+                if (verifyToken) {
+                    window.location.href = '/dashboard';
+                } else {
+                    throw new Error('Token no válido después del login');
+                }
+            } catch (verifyError) {
+                console.error('Error verificando token antes de redirigir:', verifyError);
+                showError('Error al verificar sesión. Por favor, intenta de nuevo.');
+            }
         } else {
-            throw new Error('Error al verificar token');
+            const errorData = await response.json().catch(() => ({ error: 'Error al verificar token' }));
+            throw new Error(errorData.error || 'Error al verificar token');
         }
     } catch (error) {
+        console.error('Error en login con Google:', error);
         showError(getErrorMessage(error.code) || error.message);
     }
 }
 
-// Verificar token con el backend
-async function verifyTokenWithBackend(token) {
+// Manejar login con GitHub
+async function handleGithubLogin() {
     try {
-        const response = await fetch(`${API_URL}/auth/verify-google`, {
+        if (!auth) auth = window.firebaseAuth;
+        const provider = new firebase.auth.GithubAuthProvider();
+        // Solicitar permisos adicionales si es necesario
+        provider.addScope('user:email');
+        const result = await auth.signInWithPopup(provider);
+        currentUser = result.user;
+        
+        // Obtener token fresco
+        let token;
+        try {
+            token = await currentUser.getIdToken(true); // Forzar refresh
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            throw new Error('Error al obtener token de autenticación');
+        }
+        
+        if (!token) {
+            throw new Error('No se pudo obtener el token de autenticación');
+        }
+        
+        // Verificar token con el backend
+        const response = await fetch(`${API_URL}/auth/verify-github`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
             }
         });
-        return response.ok;
+        
+        if (response.ok) {
+            showSuccess('¡Autenticación con GitHub exitosa!');
+            
+            // Esperar un momento para que Firebase actualice el estado
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Verificar que el token sigue siendo válido
+            try {
+                const verifyToken = await currentUser.getIdToken(true);
+                if (verifyToken) {
+                    window.location.href = '/dashboard';
+                } else {
+                    throw new Error('Token no válido después del login');
+                }
+            } catch (verifyError) {
+                console.error('Error verificando token antes de redirigir:', verifyError);
+                showError('Error al verificar sesión. Por favor, intenta de nuevo.');
+            }
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error al verificar token' }));
+            throw new Error(errorData.error || 'Error al verificar token');
+        }
     } catch (error) {
-        console.error('Error verificando token:', error);
+        console.error('Error en login con GitHub:', error);
+        showError(getErrorMessage(error.code) || error.message);
+    }
+}
+
+// Verificar token con el backend (mantener compatibilidad)
+async function verifyTokenWithBackend(token) {
+    return verifyAndSaveUserToBackend(token);
+}
+
+// Verificar y guardar usuario en el backend
+async function verifyAndSaveUserToBackend(token) {
+    try {
+        if (!token) {
+            console.error('Token no proporcionado a verifyAndSaveUserToBackend');
+            return false;
+        }
+        
+        const response = await fetch(`${API_URL}/auth/verify-user`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            console.log('Usuario verificado y guardado en Firestore correctamente');
+            return true;
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+            console.error('Error verificando usuario:', errorData.error || response.statusText);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error verificando y guardando usuario:', error);
         return false;
     }
 }
@@ -2260,6 +2443,735 @@ function filterUsers() {
     });
 }
 
+// ========== SISTEMA DE CHAT ==========
+
+let currentConversationId = null;
+let messageListeners = {};
+
+// Inicializar chat
+function initChat() {
+    let attempts = 0;
+    const maxAttempts = 50; // Aumentar intentos
+    
+    async function checkAndInit() {
+        attempts++;
+        
+        if (!auth) auth = window.firebaseAuth;
+        
+        if (auth && auth.currentUser) {
+            currentUser = auth.currentUser;
+            
+            // Verificar que podemos obtener el token antes de cargar conversaciones
+            try {
+                const token = await currentUser.getIdToken(true); // Forzar refresh
+                
+                if (token && token.length > 0) {
+                    console.log('✅ Token obtenido correctamente, inicializando chat...');
+                    console.log('Usuario actual:', currentUser.uid);
+                    
+                    // Verificar que los elementos del DOM existen
+                    const conversationsList = document.getElementById('conversations-list');
+                    const newChatBtn = document.getElementById('new-chat-btn');
+                    
+                    if (!conversationsList) {
+                        console.error('❌ Elemento conversations-list no encontrado');
+                    } else {
+                        console.log('✅ Elemento conversations-list encontrado');
+                    }
+                    
+                    if (!newChatBtn) {
+                        console.warn('⚠️ Elemento new-chat-btn no encontrado');
+                    } else {
+                        console.log('✅ Elemento new-chat-btn encontrado');
+                    }
+                    
+                    // Pequeño delay para asegurar que todo está listo
+                    setTimeout(() => {
+                        console.log('Iniciando carga de conversaciones...');
+                        loadConversations();
+                        initChatEventListeners();
+                    }, 300);
+                    return; // Salir de la función si todo está bien
+                } else {
+                    console.error('Token obtenido pero está vacío');
+                    throw new Error('Token vacío');
+                }
+            } catch (error) {
+                console.error('Error obteniendo token en initChat:', error);
+                
+                if (attempts >= 10) {
+                    console.error('No se pudo obtener token después de múltiples intentos');
+                    const conversationsList = document.getElementById('conversations-list');
+                    if (conversationsList) {
+                        conversationsList.innerHTML = `
+                            <p class="empty-state" style="color: var(--danger-color);">
+                                Error al obtener token de autenticación.<br>
+                                Por favor, recarga la página o cierra sesión y vuelve a iniciar sesión.
+                            </p>
+                        `;
+                    }
+                    return;
+                }
+                
+                // Reintentar después de un delay
+                setTimeout(checkAndInit, 200);
+                return;
+            }
+        }
+        
+        // Si no hay auth o no hay usuario
+        if (!auth && attempts < maxAttempts) {
+            // Reintentar si Firebase aún no está cargado
+            setTimeout(checkAndInit, 100);
+        } else if (auth && !auth.currentUser) {
+            // Firebase está cargado pero no hay usuario autenticado
+            if (attempts >= 5) {
+                console.log('No hay usuario autenticado después de varios intentos, redirigiendo...');
+                window.location.href = '/';
+                return;
+            } else {
+                // Esperar un poco más
+                setTimeout(checkAndInit, 200);
+            }
+        } else if (attempts < maxAttempts) {
+            // Seguir intentando
+            setTimeout(checkAndInit, 100);
+        } else {
+            console.error('No se pudo inicializar el chat después de múltiples intentos');
+            const conversationsList = document.getElementById('conversations-list');
+            if (conversationsList) {
+                conversationsList.innerHTML = `
+                    <p class="empty-state" style="color: var(--danger-color);">
+                        Error al inicializar el chat.<br>
+                        Por favor, recarga la página.
+                    </p>
+                `;
+            }
+        }
+    }
+    
+    checkAndInit();
+}
+
+// Inicializar event listeners del chat
+function initChatEventListeners() {
+    const newChatBtn = document.getElementById('new-chat-btn');
+    const messageForm = document.getElementById('chat-message-form');
+    const userModal = document.getElementById('user-select-modal');
+    const closeModal = document.querySelector('#user-select-modal .close');
+    
+    if (newChatBtn) {
+        newChatBtn.addEventListener('click', () => {
+            openUserSelectModal();
+        });
+    }
+    
+    if (messageForm) {
+        messageForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await sendChatMessage();
+        });
+    }
+    
+    if (closeModal) {
+        closeModal.addEventListener('click', () => {
+            if (userModal) userModal.style.display = 'none';
+        });
+    }
+    
+    window.addEventListener('click', (e) => {
+        if (e.target === userModal) {
+            userModal.style.display = 'none';
+        }
+    });
+}
+
+// Cargar conversaciones
+async function loadConversations() {
+    console.log('📥 Iniciando loadConversations()...');
+    const conversationsList = document.getElementById('conversations-list');
+    if (!conversationsList) {
+        console.error('❌ conversations-list no encontrado en loadConversations()');
+        return;
+    }
+    
+    conversationsList.innerHTML = '<p class="empty-state">Cargando conversaciones...</p>';
+    
+    try {
+        console.log('🔑 Obteniendo token...');
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) {
+            currentUser = auth.currentUser;
+        }
+        
+        if (!currentUser) {
+            console.log('No hay usuario autenticado, redirigiendo...');
+            window.location.href = '/';
+            return;
+        }
+        
+        // Obtener token con reintentos
+        let token;
+        try {
+            token = await currentUser.getIdToken(true); // Force refresh
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            conversationsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error al obtener token de autenticación. Por favor, recarga la página.</p>`;
+            return;
+        }
+        
+        if (!token) {
+            conversationsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">No se pudo obtener el token. Por favor, recarga la página.</p>`;
+            return;
+        }
+        
+        console.log('📡 Haciendo petición a:', `${API_URL}/api/chat/conversations`);
+        const response = await fetch(`${API_URL}/api/chat/conversations`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        console.log('📥 Respuesta recibida:', response.status, response.statusText);
+        
+        if (response.ok) {
+            const conversations = await response.json();
+            console.log('✅ Conversaciones recibidas:', conversations.length);
+            displayConversations(conversations);
+        } else {
+            let errorData;
+            try {
+                errorData = await response.json();
+            } catch (parseError) {
+                errorData = { error: `Error ${response.status}: ${response.statusText}` };
+            }
+            const errorMessage = errorData.error || `Error ${response.status}: ${response.statusText}`;
+            
+            console.error('❌ Error en respuesta:', response.status, errorMessage);
+            
+            if (response.status === 401) {
+                console.log('Token inválido, intentando refrescar sesión...');
+                // Intentar refrescar el token
+                try {
+                    const newToken = await currentUser.getIdToken(true);
+                    // Reintentar la petición
+                    const retryResponse = await fetch(`${API_URL}/api/chat/conversations`, {
+                        headers: {
+                            'Authorization': `Bearer ${newToken}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    if (retryResponse.ok) {
+                        const conversations = await retryResponse.json();
+                        displayConversations(conversations);
+                        return;
+                    }
+                } catch (refreshError) {
+                    console.error('Error refrescando token:', refreshError);
+                }
+                
+                conversationsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Sesión expirada. Redirigiendo...</p>`;
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else if (response.status === 404) {
+                console.error('❌ Ruta no encontrada (404). Verificar que el servidor tenga la ruta /api/chat/conversations');
+                conversationsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: La ruta de la API no se encontró. Verifica la configuración del servidor.</p>`;
+            } else {
+                throw new Error(errorMessage);
+            }
+        }
+    } catch (error) {
+        console.error('❌ Error cargando conversaciones:', error);
+        conversationsList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: ${error.message}</p>`;
+    }
+}
+
+// Mostrar conversaciones
+function displayConversations(conversations) {
+    console.log('🖼️ displayConversations() llamado con:', conversations);
+    const conversationsList = document.getElementById('conversations-list');
+    if (!conversationsList) {
+        console.error('❌ Elemento conversations-list no encontrado en el DOM');
+        return;
+    }
+    
+    conversationsList.innerHTML = '';
+    
+    if (!conversations || conversations.length === 0) {
+        console.log('ℹ️ No hay conversaciones');
+        conversationsList.innerHTML = '<p class="empty-state">No hay conversaciones. Inicia una nueva.</p>';
+        return;
+    }
+    
+    console.log('✅ Mostrando conversaciones:', conversations.length);
+    
+    conversations.forEach((conversation, index) => {
+        const item = document.createElement('div');
+        item.className = 'conversation-item';
+        item.dataset.conversationId = conversation.id;
+        
+        const otherUser = conversation.otherUser || {};
+        const lastMessage = conversation.lastMessage || 'Sin mensajes';
+        const unreadCount = conversation.unreadCount || 0;
+        const lastMessageTime = conversation.lastMessageAt 
+            ? formatTimeAgo(new Date(conversation.lastMessageAt))
+            : '';
+        
+        item.innerHTML = `
+            <div class="conversation-item-header">
+                <h4 class="conversation-user-name">${escapeHtml(otherUser.displayName || otherUser.email || 'Usuario')}</h4>
+                <span class="conversation-time">${lastMessageTime}</span>
+            </div>
+            <p class="conversation-preview">
+                ${escapeHtml(lastMessage)}
+                ${unreadCount > 0 ? `<span class="conversation-unread">${unreadCount}</span>` : ''}
+            </p>
+        `;
+        
+        item.addEventListener('click', () => {
+            openConversation(conversation.id, otherUser);
+        });
+        
+        conversationsList.appendChild(item);
+    });
+}
+
+// Abrir conversación
+async function openConversation(conversationId, otherUser) {
+    if (!conversationId) {
+        console.error('No se proporcionó conversationId');
+        showError('Error: No se especificó la conversación');
+        return;
+    }
+    
+    if (!otherUser) {
+        console.error('No se proporcionó otherUser');
+        showError('Error: Información del usuario no disponible');
+        return;
+    }
+    
+    console.log('Abriendo conversación:', conversationId, 'con usuario:', otherUser);
+    
+    currentConversationId = conversationId;
+    
+    // Actualizar UI
+    document.querySelectorAll('.conversation-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.conversationId === conversationId) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Mostrar vista de chat activo
+    const emptyState = document.getElementById('chat-empty-state');
+    const activeChat = document.getElementById('chat-active');
+    const userInfo = document.getElementById('chat-user-info');
+    
+    if (!emptyState || !activeChat) {
+        console.error('Elementos del chat no encontrados en el DOM');
+        showError('Error: Elementos de la interfaz no encontrados');
+        return;
+    }
+    
+    emptyState.style.display = 'none';
+    activeChat.style.display = 'flex';
+    
+    if (userInfo) {
+        const userNameEl = document.getElementById('chat-user-name');
+        if (userNameEl) {
+            userNameEl.textContent = otherUser.displayName || otherUser.email || 'Usuario';
+        }
+    }
+    
+    // Cargar mensajes
+    try {
+        await loadMessages(conversationId);
+    } catch (error) {
+        console.error('Error cargando mensajes:', error);
+        showError('Error al cargar mensajes: ' + error.message);
+    }
+    
+    // Marcar mensajes como leídos (no crítico si falla)
+    markMessagesAsRead(conversationId).catch(err => {
+        console.warn('Error marcando mensajes como leídos:', err);
+    });
+    
+    // Configurar listener en tiempo real
+    setupMessageListener(conversationId);
+}
+
+// Cargar mensajes
+async function loadMessages(conversationId) {
+    const messagesContainer = document.getElementById('chat-messages');
+    if (!messagesContainer) return;
+    
+    messagesContainer.innerHTML = '<p class="empty-state">Cargando mensajes...</p>';
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        let token;
+        try {
+            token = await currentUser.getIdToken(true);
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            messagesContainer.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error al obtener token. Recarga la página.</p>`;
+            return;
+        }
+        
+        const response = await fetch(`${API_URL}/api/chat/conversations/${conversationId}/messages`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const messages = await response.json();
+            displayMessages(messages);
+            scrollToBottom();
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+            const errorMessage = errorData.error || `Error ${response.status}`;
+            
+            if (response.status === 401) {
+                messagesContainer.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Sesión expirada. Redirigiendo...</p>`;
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                throw new Error(errorMessage);
+            }
+        }
+    } catch (error) {
+        console.error('Error cargando mensajes:', error);
+        messagesContainer.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: ${error.message}</p>`;
+    }
+}
+
+// Mostrar mensajes
+function displayMessages(messages) {
+    const messagesContainer = document.getElementById('chat-messages');
+    if (!messagesContainer) return;
+    
+    messagesContainer.innerHTML = '';
+    
+    if (!messages || messages.length === 0) {
+        messagesContainer.innerHTML = '<p class="empty-state">No hay mensajes aún. ¡Envía el primero!</p>';
+        return;
+    }
+    
+    messages.forEach(message => {
+        const messageEl = createMessageElement(message);
+        messagesContainer.appendChild(messageEl);
+    });
+}
+
+// Crear elemento de mensaje
+function createMessageElement(message) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message';
+    
+    const isSent = message.senderId === currentUser.uid;
+    messageDiv.classList.add(isSent ? 'sent' : 'received');
+    
+    const time = new Date(message.timestamp).toLocaleTimeString('es-ES', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+    });
+    
+    messageDiv.innerHTML = `
+        <div class="message-bubble">${escapeHtml(message.text)}</div>
+        <div class="message-info">
+            ${!isSent ? `<span class="message-sender">${escapeHtml(message.senderName || 'Usuario')}</span>` : ''}
+            <span class="message-time">${time}</span>
+        </div>
+    `;
+    
+    return messageDiv;
+}
+
+// Enviar mensaje
+async function sendChatMessage() {
+    const input = document.getElementById('chat-message-input');
+    if (!input || !currentConversationId) return;
+    
+    const text = input.value.trim();
+    if (!text) return;
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        let token;
+        try {
+            token = await currentUser.getIdToken(true);
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            showError('Error al obtener token. Por favor, recarga la página.');
+            return;
+        }
+        
+        const response = await fetch(`${API_URL}/api/chat/conversations/${currentConversationId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ text })
+        });
+        
+        if (response.ok) {
+            input.value = '';
+            // Recargar mensajes para mostrar el nuevo mensaje
+            await loadMessages(currentConversationId);
+            // Recargar lista de conversaciones para actualizar último mensaje
+            await loadConversations();
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+            const errorMessage = errorData.error || `Error ${response.status}`;
+            
+            if (response.status === 401) {
+                showError('Sesión expirada. Por favor, recarga la página.');
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                throw new Error(errorMessage);
+            }
+        }
+    } catch (error) {
+        console.error('Error enviando mensaje:', error);
+        showError('Error al enviar mensaje: ' + error.message);
+    }
+}
+
+// Configurar listener de mensajes en tiempo real
+function setupMessageListener(conversationId) {
+    // Limpiar listener anterior si existe
+    if (messageListeners[conversationId]) {
+        return; // Ya existe un listener
+    }
+    
+    // Nota: Para tiempo real completo, necesitaríamos usar Firebase SDK directamente
+    // Por ahora, usaremos polling o el backend puede implementar WebSockets
+    // Esta es una implementación básica que se actualiza cuando se envía un mensaje
+}
+
+// Marcar mensajes como leídos
+async function markMessagesAsRead(conversationId) {
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) return;
+        
+        let token;
+        try {
+            token = await currentUser.getIdToken(true);
+        } catch (tokenError) {
+            console.error('Error obteniendo token para marcar como leído:', tokenError);
+            return;
+        }
+        
+        await fetch(`${API_URL}/api/chat/conversations/${conversationId}/read`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+    } catch (error) {
+        console.error('Error marcando mensajes como leídos:', error);
+    }
+}
+
+// Abrir modal de selección de usuario
+async function openUserSelectModal() {
+    const modal = document.getElementById('user-select-modal');
+    const usersList = document.getElementById('users-select-list');
+    
+    if (!modal || !usersList) return;
+    
+    usersList.innerHTML = '<p class="empty-state">Cargando usuarios...</p>';
+    modal.style.display = 'block';
+    
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        let token;
+        try {
+            token = await currentUser.getIdToken(true);
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            usersList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error al obtener token. Recarga la página.</p>`;
+            return;
+        }
+        
+        const response = await fetch(`${API_URL}/api/chat/users`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const users = await response.json();
+            displayUserSelectList(users);
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+            const errorMessage = errorData.error || `Error ${response.status}`;
+            
+            if (response.status === 401) {
+                usersList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Sesión expirada. Redirigiendo...</p>`;
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                throw new Error(errorMessage);
+            }
+        }
+    } catch (error) {
+        console.error('Error cargando usuarios:', error);
+        usersList.innerHTML = `<p class="empty-state" style="color: var(--danger-color);">Error: ${error.message}</p>`;
+    }
+}
+
+// Mostrar lista de usuarios para seleccionar
+function displayUserSelectList(users) {
+    const usersList = document.getElementById('users-select-list');
+    if (!usersList) return;
+    
+    usersList.innerHTML = '';
+    
+    if (!users || users.length === 0) {
+        usersList.innerHTML = '<p class="empty-state">No hay otros usuarios disponibles.</p>';
+        return;
+    }
+    
+    users.forEach(user => {
+        const item = document.createElement('div');
+        item.className = 'user-select-item';
+        
+        const initials = (user.displayName || user.email || 'U').substring(0, 2).toUpperCase();
+        
+        item.innerHTML = `
+            <div class="user-select-avatar">
+                ${user.picture ? `<img src="${escapeHtml(user.picture)}" alt="${escapeHtml(user.displayName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` : initials}
+            </div>
+            <div class="user-select-info">
+                <h4 class="user-select-name">${escapeHtml(user.displayName || user.email || 'Usuario')}</h4>
+                ${user.email ? `<p class="user-select-email">${escapeHtml(user.email)}</p>` : ''}
+            </div>
+        `;
+        
+        item.addEventListener('click', async () => {
+            await startConversationWithUser(user.uid, user);
+        });
+        
+        usersList.appendChild(item);
+    });
+}
+
+// Iniciar conversación con un usuario
+async function startConversationWithUser(otherUserId, otherUser) {
+    try {
+        if (!auth) auth = window.firebaseAuth;
+        if (!currentUser && auth) currentUser = auth.currentUser;
+        if (!currentUser) {
+            window.location.href = '/';
+            return;
+        }
+        
+        let token;
+        try {
+            token = await currentUser.getIdToken(true);
+        } catch (tokenError) {
+            console.error('Error obteniendo token:', tokenError);
+            showError('Error al obtener token. Por favor, recarga la página.');
+            return;
+        }
+        
+        const response = await fetch(`${API_URL}/api/chat/conversations`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ otherUserId })
+        });
+        
+        if (response.ok) {
+            const conversation = await response.json();
+            
+            // Cerrar modal
+            const modal = document.getElementById('user-select-modal');
+            if (modal) modal.style.display = 'none';
+            
+            // Abrir conversación
+            await openConversation(conversation.id, otherUser);
+            
+            // Recargar lista de conversaciones
+            await loadConversations();
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+            const errorMessage = errorData.error || `Error ${response.status}`;
+            
+            if (response.status === 401) {
+                showError('Sesión expirada. Por favor, recarga la página.');
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                throw new Error(errorMessage);
+            }
+        }
+    } catch (error) {
+        console.error('Error iniciando conversación:', error);
+        showError('Error al iniciar conversación: ' + error.message);
+    }
+}
+
+// Scroll al final de los mensajes
+function scrollToBottom() {
+    const container = document.getElementById('chat-messages-container');
+    if (container) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+// Formatear tiempo relativo
+function formatTimeAgo(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Ahora';
+    if (diffMins < 60) return `Hace ${diffMins} min`;
+    if (diffHours < 24) return `Hace ${diffHours} h`;
+    if (diffDays < 7) return `Hace ${diffDays} d`;
+    
+    return date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
 // Función para inicializar la página cuando Firebase esté listo
 function initPage() {
     const path = window.location.pathname;
@@ -2279,6 +3191,8 @@ function initPage() {
         initDocuments();
     } else if (path === '/users') {
         initUsers();
+    } else if (path === '/chat') {
+        initChat();
     }
 }
 

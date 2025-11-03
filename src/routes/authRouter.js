@@ -6,6 +6,8 @@ import {
     deleteUser,
     getAllUsers,
     verifyGoogleToken,
+    verifyGithubToken,
+    verifyAndSaveUser,
     updateUserRole
 } from "../controllers/authController.js";
 import { verifyFirebaseToken, isAdmin } from "../middleware/authMiddleware.js";
@@ -15,6 +17,9 @@ const authRouter = Router();
 // Rutas públicas
 authRouter.post("/register", registerUser);
 authRouter.post("/verify-google", verifyFirebaseToken, verifyGoogleToken);
+authRouter.post("/verify-github", verifyFirebaseToken, verifyGithubToken);
+// Ruta genérica para verificar y guardar usuario (login con email/contraseña u otros métodos)
+authRouter.post("/verify-user", verifyFirebaseToken, verifyAndSaveUser);
 
 // Rutas protegidas (requieren autenticación)
 authRouter.get("/me", verifyFirebaseToken, getCurrentUser);
